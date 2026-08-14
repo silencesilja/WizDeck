@@ -1,0 +1,19 @@
+{
+  "name": "wizdeck",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Electron desktop control for WiZ smart bulbs: finds them on the LAN by MAC even after DHCP changes their IP, then controls power, brightness, colour, colour temperature, scenes/effects and rooms over local UDP.",
+  "productName": "WizDeck",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "verify": "node tools/verify.mjs",
+    "icon": "node tools/make-icon.mjs",
+    "package": "node tools/install-macos.mjs --no-install",
+    "install:app": "node tools/install-macos.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^43.4.0"
+  }
+}

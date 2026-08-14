@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self';
+               connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>WizDeck</title>
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<header class="topbar" id="topbar">
+  <div class="topbar__brand">
+    <span class="mark" aria-hidden="true"></span>
+    <span class="mark__label">WizDeck</span>
+  </div>
+
+  <div class="bridge">
+    <span class="dot" id="status-dot" data-status="idle"></span>
+    <div class="bridge__text">
+      <div class="bridge__line">
+        <span class="bridge__name" id="bridge-name">No bulbs found</span>
+      </div>
+      <div class="bridge__line bridge__line--sub">
+        <span class="mono bridge__addr" id="bridge-address">&mdash;</span>
+        <span class="sep" id="bridge-sep" hidden>&middot;</span>
+        <span class="bridge__model mono" id="bridge-model"></span>
+        <span class="sep" id="update-sep" hidden>&middot;</span>
+        <span class="bridge__updated" id="bridge-updated"></span>
+      </div>
+    </div>
+  </div>
+
+  <p class="topbar__status" id="status-message"></p>
+
+  <form class="manual" id="manual-form" autocomplete="off">
+    <label class="sr-only" for="manual-address">Bulb address (host or host:port)</label>
+    <input class="input input--mono" id="manual-address" type="text" inputmode="url"
+           placeholder="192.168.1.146" spellcheck="false"
+           title="Bulb address, e.g. 192.168.1.146 or 192.168.1.146:38899">
+    <button class="btn" type="submit" id="btn-manual">Connect</button>
+  </form>
+
+  <div class="topbar__actions">
+    <button class="btn" type="button" id="btn-rescan">
+      <span class="btn__spin" aria-hidden="true"></span><span>Rescan</span>
+    </button>
+    <button class="btn" type="button" id="btn-refresh">Refresh</button>
+    <button class="btn btn--quiet btn--danger" type="button" id="btn-forget">Forget bulbs</button>
+  </div>
+</header>
+
+<main id="stage">
+
+  <!-- Default state of the document: the app module hides this the moment it finds
+       window.hue. It therefore also stands in when the module cannot run at all,
+       e.g. when this file is opened straight in a browser over file://. -->
+  <div class="banner banner--noapi" id="no-api-banner" role="alert">
+    <strong>No bulb API in this window</strong>
+    <span>
+      <code>window.hue</code> is not available here, so nothing on this page can find or control a
+      WiZ bulb. The renderer is built to run inside the WizDeck desktop app, where the main process
+      talks to the bulbs over UDP. Start the app to control your lights.
+    </span>
+  </div>
+
+  <section class="view view--discovery" id="view-discovery" hidden>
+    <div class="panel hero">
+      <div class="radar" id="radar" aria-hidden="true"><i></i><i></i><i></i><span></span></div>
+      <div class="hero__body">
+        <h1 class="hero__title" id="discovery-title">Looking for your WiZ bulbs</h1>
+        <p class="prose" id="discovery-copy">
+          Broadcasting a registration probe on UDP 38899 and unicast-probing the local subnet.
+        </p>
+        <p class="prose prose--dim">
+          Bulbs are matched by MAC address, not by IP, so a new DHCP lease after a router reboot
+          changes nothing &mdash; a bulb that moves to another address is recognised again on the
+          next scan. You can also aim straight at one by typing its address above.
+        </p>
+        <div class="hero__actions">
+          <button class="btn btn--primary" type="button" id="btn-scan-again">Scan again</button>
+          <button class="btn" type="button" id="btn-connect-best">Connect to best match</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel__head">
+        <h2 class="panel__title">Bulbs seen</h2>
+        <span class="count" id="candidate-count">0</span>
+      </div>
+      <ul class="cands" id="candidate-list"></ul>
+      <p class="empty" id="candidate-empty">
+        Nothing has answered on UDP 38899 yet. Probing continues in the background, so a bulb that
+        gets power or rejoins the network shows up here on its own.
+      </p>
+    </div>
+  </section>
+
+  <section class="view view--dashboard" id="view-dashboard" hidden>
+    <div class="toolbar">
+      <p class="toolbar__summary" id="dash-summary"></p>
+      <div class="toolbar__spacer"></div>
+      <div class="scenes--global" id="global-scenes" hidden></div>
+      <div class="seg" id="transition-seg" role="group" aria-label="Transition time">
+        <span class="seg__label">Transition</span>
+        <button class="seg__btn" type="button" data-ms="0">Instant</button>
+        <button class="seg__btn" type="button" data-ms="200">0.2s</button>
+        <button class="seg__btn is-active" type="button" data-ms="400">0.4s</button>
+        <button class="seg__btn" type="button" data-ms="1000">1s</button>
+      </div>
+    </div>
+
+    <div class="zones" id="zones-strip" hidden>
+      <div class="zones__head">
+        <h2 class="panel__title">Zones &amp; groups</h2>
+      </div>
+      <div class="zones__list" id="zones-list"></div>
+    </div>
+
+    <div class="sections" id="sections"></div>
+
+    <p class="empty" id="dash-empty" hidden>
+      Connected, but no lights are being reported. Add bulbs in the WiZ app, then hit Refresh.
+    </p>
+  </section>
+
+</main>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
