@@ -185,6 +185,23 @@ const rescan = await engine.discover({});
 ok('rescan finds the bulb by MAC', rescan.ok && rescan.candidates.some((c) => c.id === light.id), `${rescan.candidates.length} candidate(s)`);
 ok('address persisted for next launch', JSON.parse(require('node:fs').readFileSync(storePath, 'utf8')).bulbs[light.id].address === ip);
 
+console.log('\n== rename (WizDeck-side name, stored by MAC) ==');
+const defaultName = engine.getState().lights.find((l) => l.id === light.id).name;
+r = await engine.renameLight(light.id, '  Verify  Lamp  ');
+let renamed = engine.getState();
+ok('renameLight collapses whitespace', r.ok && r.name === 'Verify Lamp', r.error || r.name);
+ok('name shows on the light', renamed.lights.find((l) => l.id === light.id).name === 'Verify Lamp');
+ok('name shows on the candidate', renamed.candidates.find((c) => c.id === light.id).name === 'Verify Lamp');
+ok('name persisted by MAC', JSON.parse(require('node:fs').readFileSync(storePath, 'utf8')).bulbs[light.id].name === 'Verify Lamp');
+const reloaded = createEngine({ storePath, log: () => {} });
+await reloaded.start();
+ok('name survives a restart', (reloaded.getState().lights.find((l) => l.id === light.id) || {}).name === 'Verify Lamp');
+reloaded.dispose();
+r = await engine.renameLight(light.id, '   ');
+ok('empty name falls back to the default', r.ok && engine.getState().lights.find((l) => l.id === light.id).name === defaultName, defaultName);
+r = await engine.renameLight('deadbeefdead', 'Nope');
+ok('renaming an unknown bulb returns {ok:false}', r.ok === false, r.error);
+
 console.log('\n== restore original state ==');
 const restore = { state: original.state };
 if (Number.isFinite(original.dimming)) restore.dimming = original.dimming;

@@ -27,6 +27,12 @@ function createEngine({ storePath, onState, log } = {}) {
 
   /** @type {Map<string, any>} mac -> bulb record */
   const bulbs = new Map();
+  /** mac -> user-chosen name. WiZ never reports one, so the store is the source. */
+  const names = new Map(
+    Object.entries(store.read().bulbs || {})
+      .filter(([, info]) => info && typeof info.name === 'string' && info.name.trim())
+      .map(([mac, info]) => [mac, info.name.trim()])
+  );
   let state = {
     status: 'idle',
     message: '',
@@ -81,6 +87,16 @@ function createEngine({ storePath, onState, log } = {}) {
     const m = /(\d+)\s*$/.exec(String(address || '').split(':')[0]);
     return m ? m[1] : '?';
   }
+
+  /** The local protocol has no name field, so ours wins over the ".146" fallback. */
+  function displayName(bulb) {
+    return names.get(bulb.mac) || `WiZ Bulb .${lastOctet(bulb.address)}`;
+  }
+
+  const cleanName = (value) => String(value === null || value === undefined ? '' : value)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 40);
 
   /* ---------------------------------------------------------- bulb records */
 
@@ -153,7 +169,7 @@ function createEngine({ storePath, onState, log } = {}) {
 
     return {
       id: bulb.mac,
-      name: bulb.name || `WiZ Bulb .${lastOctet(bulb.address)}`,
+      name: displayName(bulb),
       room: roomName || null,
       on: Boolean(pilot.state),
       reachable,
@@ -205,7 +221,7 @@ function createEngine({ storePath, onState, log } = {}) {
       ? {
           address: [...bulbs.values()].map((b) => b.address).filter(Boolean).join(', '),
           id: String((([...bulbs.values()][0] || {}).system || {}).homeId || 'wiz'),
-          name: lights.length === 1 ? 'WiZ bulb (local UDP)' : `WiZ · ${lights.length} bulbs`,
+          name: lights.length === 1 ? lights[0].name : `WiZ · ${lights.length} bulbs`,
           modelid: (([...bulbs.values()][0] || {}).system || {}).moduleName || 'WiZ',
           swversion: (([...bulbs.values()][0] || {}).system || {}).fwVersion || '',
           apiVersion: 2,
@@ -221,7 +237,7 @@ function createEngine({ storePath, onState, log } = {}) {
       candidates: [...bulbs.values()].map((b) => ({
         address: b.address,
         id: b.mac,
-        name: b.name || `WiZ Bulb .${lastOctet(b.address)}`,
+        name: displayName(b),
         source: b.source || 'sweep',
         reachable: Date.now() - b.lastSeen < OFFLINE_AFTER_MS,
       })),
@@ -547,6 +563,7 @@ function createEngine({ storePath, onState, log } = {}) {
 
     async forget() {
       bulbs.clear();
+      names.clear();
       store.forget();
       rebuild();
       return { ok: true };
@@ -554,6 +571,18 @@ function createEngine({ storePath, onState, log } = {}) {
 
     async setLight(id, patch) {
       return writeBulb(String(id), patch || {});
+    },
+
+    /** Names are ours alone: persist by MAC so DHCP and restarts keep them. */
+    async renameLight(id, name) {
+      const mac = String(id);
+      if (!bulbs.has(mac)) return { ok: false, error: `unknown bulb ${mac}` };
+      const clean = cleanName(name);
+      if (clean) names.set(mac, clean);
+      else names.delete(mac);
+      store.rememberBulb(mac, { name: clean || null });
+      rebuild();
+      return { ok: true, name: displayName(bulbs.get(mac)) };
     },
 
     async setGroup(id, patch) {

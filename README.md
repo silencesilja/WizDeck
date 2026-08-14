@@ -189,6 +189,9 @@ Default state file (bulbs keyed by MAC, plus the remembered transition time):
   ones also take a speed
 - **Rooms** grouped by the bulb's own `roomId`, with 10 scene chips per room
 - **Identify** — pulses the bulb so you can tell which one it is
+- **Rename** — the local protocol carries no name, so WizDeck keeps its own,
+  stored by MAC: click **Rename** on a card (or double-click its name), type,
+  Enter. Escape cancels; an empty box restores the `WiZ Bulb .146` default.
 - Live state: the app registers for the bulb's `syncPilot` pushes, so changes
   made in the WiZ app or at a wall switch show up here too
 
@@ -267,7 +270,8 @@ devDependencies.
 - **Found but not controllable** — some routers block client-to-client UDP
   ("AP isolation"); turn it off.
 - **Name shows as `WiZ Bulb .146`** — WiZ does not expose the name you set in its
-  app over the local protocol, only MAC/room ids.
+  app over the local protocol, only MAC/room ids. Use the card's **Rename**
+  button; WizDeck stores that name by MAC in `wiz.json`.
 - **Firewall prompt on first run** — the app listens on UDP 38900 for state
   pushes. Allow it (macOS prompt, Windows Defender dialog, or
   `sudo ufw allow 38900/udp` on Linux), otherwise the UI falls back to polling.

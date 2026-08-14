@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('hue', {
   connect: (address) => ipcRenderer.invoke('hue:connect', address || null),
   forget: () => ipcRenderer.invoke('hue:forget'),
   setLight: (id, patch) => ipcRenderer.invoke('hue:setLight', id, patch || {}),
+  renameLight: (id, name) => ipcRenderer.invoke('hue:renameLight', id, name),
   setGroup: (id, patch) => ipcRenderer.invoke('hue:setGroup', id, patch || {}),
   activateScene: (id, opts) => ipcRenderer.invoke('hue:scene', id, opts || {}),
   identify: (id) => ipcRenderer.invoke('hue:identify', id),

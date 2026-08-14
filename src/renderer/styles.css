@@ -465,6 +465,10 @@ html.hue-ready .banner--noapi { display: none; }
 }
 .card__chips { display: flex; gap: 6px; }
 .card__head-spacer { flex: 1 1 auto; }
+.card__rename { flex: 1 1 auto; max-width: 220px; font-size: var(--fs-md); }
+.card__rename-btn { flex: none; opacity: 0.5; }
+.card:hover .card__rename-btn,
+.card__rename-btn:focus-visible { opacity: 1; }
 
 .swatch {
   flex: none; width: 12px; height: 12px; border-radius: var(--r-pill);

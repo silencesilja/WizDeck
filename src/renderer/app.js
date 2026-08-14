@@ -676,10 +676,18 @@ function createLightCard(light) {
   const id = light.id;
   const swatch = h('span', { class: 'swatch' });
   const name = h('h3', { class: 'card__name' });
+  const nameInput = h('input', {
+    class: 'input card__rename', type: 'text', maxLength: 40, hidden: true,
+    spellcheck: false, placeholder: 'Bulb name',
+  });
+  const renameBtn = h('button', {
+    class: 'btn btn--quiet btn--tiny card__rename-btn', type: 'button',
+    textContent: 'Rename', title: 'Rename this bulb',
+  });
   const chips = h('div', { class: 'card__chips' });
   const power = makeSwitch('Power');
   const head = h('div', { class: 'card__head' },
-    swatch, name, chips, h('div', { class: 'card__head-spacer' }), power);
+    swatch, name, nameInput, renameBtn, chips, h('div', { class: 'card__head-spacer' }), power);
 
   const briNum = makeNumber({
     unit: '%', key: `bri:${id}`, coarse: 10,
@@ -809,6 +817,52 @@ function createLightCard(light) {
   effect.addEventListener('change', () => setLight(id, { effect: effect.value }));
   identify.addEventListener('click', () => call('identify', [id]));
 
+  /* -------- rename: the name is ours, stored by MAC in the main process -------- */
+
+  let renaming = false;
+
+  function showName() {
+    renaming = false;
+    nameInput.hidden = true;
+    name.hidden = false;
+    renameBtn.hidden = false;
+    editEnd(`name:${id}`);
+  }
+
+  function startRename() {
+    if (renaming) return;
+    renaming = true;
+    editStart(`name:${id}`);
+    nameInput.value = current.name || '';
+    name.hidden = true;
+    renameBtn.hidden = true;
+    nameInput.hidden = false;
+    nameInput.focus();
+    nameInput.select();
+  }
+
+  /** An empty box is meaningful: it drops back to the default "WiZ Bulb .146". */
+  function commitRename() {
+    if (!renaming) return;
+    const value = nameInput.value.trim();
+    showName();
+    if (value === (current.name || '')) return;
+    call('renameLight', [id, value]);
+  }
+
+  renameBtn.addEventListener('click', startRename);
+  name.addEventListener('dblclick', startRename);
+  nameInput.addEventListener('blur', commitRename);
+  nameInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commitRename();
+    } else if (event.key === 'Escape') {
+      event.stopPropagation(); /* Escape here cancels the rename, not the colour panel */
+      showName();
+    }
+  });
+
   return {
     el,
     destroy() {
@@ -841,6 +895,8 @@ function createLightCard(light) {
         colorBtn.setAttribute('aria-label', `Colour picker for ${label}`);
         effect.setAttribute('aria-label', `Effect for ${label}`);
         identify.setAttribute('aria-label', `Identify ${label}`);
+        renameBtn.setAttribute('aria-label', `Rename ${label}`);
+        nameInput.setAttribute('aria-label', `Name for ${label}`);
       }
       setSwitch(power, Boolean(next.on));
       power.disabled = !reachable;

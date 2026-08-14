@@ -71,6 +71,7 @@ function wireIpc() {
     'hue:connect': (_e, address) => engine.connect(address || undefined),
     'hue:forget': () => engine.forget(),
     'hue:setLight': (_e, id, patch) => engine.setLight(id, patch || {}),
+    'hue:renameLight': (_e, id, name) => engine.renameLight(id, name),
     'hue:setGroup': (_e, id, patch) => engine.setGroup(id, patch || {}),
     'hue:scene': (_e, id, opts) => engine.activateScene(id, opts || {}),
     'hue:identify': (_e, id) => engine.identify(id),
