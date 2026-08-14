@@ -60,7 +60,23 @@ function normalizeState(raw) {
 }
 
 let state = emptyState();
-let transitionMs = 400;
+
+/* Transition is a per-user habit, not a per-session detail: remember the choice. */
+const TRANSITION_KEY = 'wizdeck.transitionMs';
+const TRANSITION_CHOICES = [0, 200, 400, 1000];
+
+function loadTransition() {
+  try {
+    const saved = window.localStorage.getItem(TRANSITION_KEY);
+    /* Number(null) is 0, which is itself a valid choice — reject the absent key first. */
+    const ms = saved === null ? NaN : Number(saved);
+    return TRANSITION_CHOICES.includes(ms) ? ms : 400;
+  } catch (_) {
+    return 400; /* storage can be denied; the default still works */
+  }
+}
+
+let transitionMs = loadTransition();
 
 /* ------------------------------------------------------------------ toasts */
 
@@ -224,6 +240,12 @@ function syncRange(input, key, value) {
   paintRange(input);
 }
 
+/** Write a committed value into a slider even while its edit guard is up. */
+function setRangeValue(input, value) {
+  input.value = String(value);
+  paintRange(input);
+}
+
 /* ------------------------------------------------------- shared list diff */
 
 function syncList(container, items, keyOf, factory, registry) {
@@ -265,14 +287,106 @@ function setSwitch(btn, on) {
 
 let fieldSeq = 0;
 
-function makeField(labelText, input, { className = 'field' } = {}) {
+function makeField(labelText, input, readout, { className = 'field' } = {}) {
   const id = `f${++fieldSeq}`;
   input.id = id;
   const label = h('label', { class: 'field__label', htmlFor: id, textContent: labelText });
-  const value = h('span', { class: 'field__value' });
   const wrap = h('div', { class: className },
-    h('div', { class: 'field__row' }, label, value), input);
-  return { el: wrap, value, input };
+    h('div', { class: 'field__row' }, label, readout.el), input);
+  return { el: wrap, input };
+}
+
+/**
+ * Editable numeric readout for a slider. The slider stays the fast path; this is
+ * the exact one — type 2700, press Enter. Arrows step, Shift+arrows step coarse,
+ * Escape reverts. It shares the slider's edit key, so an incoming state push
+ * cannot overwrite half-typed digits.
+ */
+function makeNumber({ unit = '', step = 1, coarse = 10, key, send }) {
+  const input = h('input', {
+    class: 'num__input', type: 'text', inputmode: 'numeric', autocomplete: 'off',
+    spellcheck: false, role: 'spinbutton', size: 4,
+  });
+  const el = h('span', { class: 'field__value num' },
+    input, unit ? h('span', { class: 'num__unit', textContent: unit }) : null);
+
+  let min = 0;
+  let max = 100;
+  let value = 0;
+  let sent = null;
+
+  function paint() {
+    input.value = String(value);
+    input.setAttribute('aria-valuenow', String(value));
+  }
+
+  /** Clamp to the bulb's own range, echo the number that was actually taken, write once. */
+  function commit(raw) {
+    const text = String(raw).trim();
+    if (!text) {
+      paint(); /* box cleared and left: put the live value back, silently */
+      return;
+    }
+    /* lenient about stray characters, strict about there being a number at all:
+       stripping first would turn "warm" into 0 and dim the bulb to its floor */
+    const parsed = /\d/.test(text) ? Number(text.replace(/[^\d.]/g, '')) : NaN;
+    if (!Number.isFinite(parsed)) {
+      toast(`"${text}" is not a number`, 'info');
+      paint();
+      return;
+    }
+    value = clamp(Math.round(parsed / step) * step, min, max);
+    paint();
+    if (value === sent) return; /* nothing changed: do not spend a datagram */
+    sent = value;
+    send(value);
+  }
+
+  input.addEventListener('focus', () => editStart(key));
+  input.addEventListener('blur', () => {
+    commit(input.value);
+    editEnd(key);
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commit(input.value);
+      input.select();
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      paint();
+      input.blur();
+      return;
+    }
+    const dir = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0;
+    if (!dir) return;
+    event.preventDefault();
+    commit(value + dir * (event.shiftKey ? coarse : step));
+  });
+
+  return {
+    el,
+    input,
+    setRange(lo, hi) {
+      min = lo;
+      max = hi;
+      input.size = String(hi).length + 1;
+      input.setAttribute('aria-valuemin', String(lo));
+      input.setAttribute('aria-valuemax', String(hi));
+    },
+    label(text) {
+      input.setAttribute('aria-label', text);
+    },
+    /** Adopt an authoritative value unless the user is typing into this very box. */
+    set(next) {
+      if (document.activeElement === input) return;
+      value = next;
+      sent = next;
+      paint();
+    },
+  };
 }
 
 function makeSceneChips() {
@@ -490,21 +604,48 @@ const dash = {
   zonesList: $('zones-list'),
   globalScenes: $('global-scenes'),
   seg: $('transition-seg'),
+  allOn: $('btn-all-on'),
+  allOff: $('btn-all-off'),
 };
 
-dash.seg.addEventListener('click', (event) => {
-  const btn = event.target.closest('.seg__btn');
-  if (!btn) return;
-  transitionMs = Number(btn.dataset.ms);
+function selectTransition(ms, { persist = true } = {}) {
+  transitionMs = ms;
   for (const b of dash.seg.querySelectorAll('.seg__btn')) {
-    const active = b === btn;
+    const active = Number(b.dataset.ms) === ms;
     b.classList.toggle('is-active', active);
     b.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
-});
-for (const b of dash.seg.querySelectorAll('.seg__btn')) {
-  b.setAttribute('aria-pressed', b.classList.contains('is-active') ? 'true' : 'false');
+  if (!persist) return;
+  try {
+    window.localStorage.setItem(TRANSITION_KEY, String(ms));
+  } catch (_) { /* the choice still holds for this session */ }
 }
+
+dash.seg.addEventListener('click', (event) => {
+  const btn = event.target.closest('.seg__btn');
+  if (btn) selectTransition(Number(btn.dataset.ms));
+});
+selectTransition(transitionMs, { persist: false });
+
+/** One switch for the whole home: N unicast writes, a single summary toast. */
+async function setAllLights(on) {
+  const targets = state.lights.filter((l) => l.reachable);
+  if (!targets.length) {
+    toast('No reachable bulbs to switch', 'info');
+    return;
+  }
+  const patch = withDuration({ on });
+  const results = await Promise.all(
+    targets.map((l) => call('setLight', [l.id, patch], { silent: true })),
+  );
+  const failed = results.filter((r) => !r.ok);
+  if (failed.length) {
+    toast(`${failed.length} of ${targets.length} bulbs did not answer \u2014 ${failed[0].error}`);
+  }
+}
+
+dash.allOn.addEventListener('click', () => setAllLights(true));
+dash.allOff.addEventListener('click', () => setAllLights(false));
 
 /* one wheel instance, re-parented into whichever card has its picker open */
 let wheel = null;
@@ -540,12 +681,29 @@ function createLightCard(light) {
   const head = h('div', { class: 'card__head' },
     swatch, name, chips, h('div', { class: 'card__head-spacer' }), power);
 
+  const briNum = makeNumber({
+    unit: '%', key: `bri:${id}`, coarse: 10,
+    send: (value) => {
+      setRangeValue(bri.input, value);
+      setLight(id, withDuration({ bri: value, on: value > 0 && !current.on ? true : undefined }));
+    },
+  });
   const bri = makeField('Brightness', h('input', {
     type: 'range', min: '0', max: '100', step: '1', value: '0',
-  }));
+  }), briNum);
+  briNum.setRange(0, 100);
+
+  const ctNum = makeNumber({
+    unit: 'K', step: 50, coarse: 500, key: `ct:${id}`,
+    send: (value) => {
+      setRangeValue(ct.input, value);
+      setLight(id, withDuration({ kelvin: value }));
+    },
+  });
   const ct = makeField('Temperature', h('input', {
     class: 'range--ct', type: 'range', min: '2000', max: '6500', step: '50', value: '2700',
-  }));
+  }), ctNum);
+  ctNum.setRange(2000, 6500);
 
   const colorBtn = h('button', {
     class: 'btn btn--tiny', type: 'button', 'aria-expanded': 'false',
@@ -578,12 +736,12 @@ function createLightCard(light) {
   });
 
   bindRange(bri.input, `bri:${id}`, (value) => {
-    bri.value.textContent = `${value}%`;
+    briNum.set(value);
     setLight(id, withDuration({ bri: value, on: value > 0 && !current.on ? true : undefined }));
   });
 
   bindRange(ct.input, `ct:${id}`, (value) => {
-    ct.value.textContent = `${value} K`;
+    ctNum.set(value);
     setLight(id, withDuration({ kelvin: value }));
   });
 
@@ -676,7 +834,9 @@ function createLightCard(light) {
         name.title = next.archetype ? `${label} \u2014 ${titleize(next.archetype)}` : label;
         power.setAttribute('aria-label', `Power for ${label}`);
         bri.input.setAttribute('aria-label', `Brightness for ${label}`);
+        briNum.label(`Brightness for ${label} in percent`);
         ct.input.setAttribute('aria-label', `Colour temperature for ${label}`);
+        ctNum.label(`Colour temperature for ${label} in kelvin`);
         hexInput.setAttribute('aria-label', `Hex colour for ${label}`);
         colorBtn.setAttribute('aria-label', `Colour picker for ${label}`);
         effect.setAttribute('aria-label', `Effect for ${label}`);
@@ -699,30 +859,35 @@ function createLightCard(light) {
       if (dimmable) {
         const value = Math.round(clamp(Number(next.bri) || 0, 0, 100));
         syncRange(bri.input, `bri:${id}`, value);
-        if (!editing(`bri:${id}`)) bri.value.textContent = `${value}%`;
+        if (!editing(`bri:${id}`)) briNum.set(value);
         bri.input.disabled = !reachable;
+        briNum.input.disabled = !reachable;
         bri.el.classList.toggle('is-off', !next.on);
       }
 
       /* colour temperature */
       ct.el.hidden = !caps.ct;
       if (caps.ct) {
+        /* mirek round-trips land on 2198/6494; snap to the 50 K grid the bulb speaks */
+        const snap = (k) => Math.round(k / 50) * 50;
         const mirekMin = Number(next.mirekMin) || 153;
         const mirekMax = Number(next.mirekMax) || 500;
-        const warmK = mirekToKelvin(mirekMax);
-        const coolK = mirekToKelvin(mirekMin);
+        const warmK = snap(mirekToKelvin(mirekMax));
+        const coolK = snap(mirekToKelvin(mirekMin));
         const sig = `${warmK}-${coolK}`;
         if (ctSignature !== sig) {
           ctSignature = sig;
           ct.input.min = String(warmK);
           ct.input.max = String(coolK);
           ct.input.style.setProperty('--ct-gradient', kelvinGradient(warmK, coolK));
+          ctNum.setRange(warmK, coolK);
         }
-        const kelvin = next.mirek ? clamp(mirekToKelvin(next.mirek), warmK, coolK) : warmK;
+        const kelvin = next.mirek ? clamp(snap(mirekToKelvin(next.mirek)), warmK, coolK) : warmK;
         syncRange(ct.input, `ct:${id}`, kelvin);
-        if (!editing(`ct:${id}`)) ct.value.textContent = `${kelvin} K`;
+        if (!editing(`ct:${id}`)) ctNum.set(kelvin);
         ct.input.style.setProperty('--thumb', kelvinToHex(kelvin));
         ct.input.disabled = !reachable;
+        ctNum.input.disabled = !reachable;
         ct.el.classList.toggle('is-off', !next.on);
       }
 
@@ -768,9 +933,18 @@ function createSection(entry) {
   const kindBadge = h('span', { class: 'badge' });
   const count = h('span', { class: 'group__count' });
   const power = makeSwitch('Power');
+  const masterNum = makeNumber({
+    unit: '%', key: `gbri:${entry.key}`, coarse: 10,
+    send: (value) => {
+      setRangeValue(master.input, value);
+      if (!group) return;
+      setGroup(group.id, withDuration({ bri: value, on: value > 0 && !group.on ? true : undefined }));
+    },
+  });
   const master = makeField('Brightness', h('input', {
     class: 'group__slider', type: 'range', min: '0', max: '100', step: '1', value: '0',
-  }));
+  }), masterNum);
+  masterNum.setRange(0, 100);
   master.el.classList.add('group__master');
   const blink = h('button', { class: 'btn btn--tiny', type: 'button', textContent: 'Blink' });
   const ctrls = h('div', { class: 'group__ctrls' }, master.el, blink, power);
@@ -793,7 +967,7 @@ function createSection(entry) {
     if (group) setGroup(group.id, { alert: 'breathe' });
   });
   bindRange(master.input, `gbri:${entry.key}`, (value) => {
-    master.value.textContent = `${value}%`;
+    masterNum.set(value);
     if (group) {
       setGroup(group.id, withDuration({ bri: value, on: value > 0 && !group.on ? true : undefined }));
     }
@@ -819,13 +993,14 @@ function createSection(entry) {
         blink.setAttribute('aria-label', `Flash every light in ${label}`);
         power.setAttribute('aria-label', `Power for ${label}`);
         master.input.setAttribute('aria-label', `Brightness for ${label}`);
+        masterNum.label(`Brightness for ${label} in percent`);
         const key = `gbri:${next.key}`;
         const hasBri = group.bri !== null && group.bri !== undefined;
         master.el.hidden = !hasBri;
         if (hasBri) {
           const value = Math.round(clamp(Number(group.bri) || 0, 0, 100));
           syncRange(master.input, key, value);
-          if (!editing(key)) master.value.textContent = `${value}%`;
+          if (!editing(key)) masterNum.set(value);
         }
       }
       scenes.update(next.scenes);
@@ -844,9 +1019,18 @@ function createZoneRow(entry) {
     class: 'zone__slider', type: 'range', min: '0', max: '100', step: '1', value: '0',
     'aria-label': 'Zone brightness',
   });
+  const briNum = makeNumber({
+    unit: '%', key: `zbri:${entry.key}`, coarse: 10,
+    send: (value) => {
+      setRangeValue(slider, value);
+      setGroup(group.id, withDuration({ bri: value, on: value > 0 && !group.on ? true : undefined }));
+    },
+  });
+  briNum.setRange(0, 100);
   const scenes = makeSceneChips();
   const el = h('div', { class: 'zone' },
-    h('div', { class: 'zone__head' }, name, badge, h('span', { class: 'zone__spacer' }), power),
+    h('div', { class: 'zone__head' },
+      name, badge, h('span', { class: 'zone__spacer' }), briNum.el, power),
     slider, scenes.el);
 
   let group = entry.group;
@@ -856,6 +1040,7 @@ function createZoneRow(entry) {
     setGroup(group.id, withDuration({ on: next }));
   });
   bindRange(slider, `zbri:${entry.key}`, (value) => {
+    briNum.set(value);
     setGroup(group.id, withDuration({ bri: value, on: value > 0 && !group.on ? true : undefined }));
   });
 
@@ -869,9 +1054,14 @@ function createZoneRow(entry) {
       setSwitch(power, Boolean(group.on));
       const hasBri = group.bri !== null && group.bri !== undefined;
       slider.hidden = !hasBri;
+      briNum.el.hidden = !hasBri;
       if (hasBri) {
+        const key = `zbri:${next.key}`;
+        const value = Math.round(clamp(Number(group.bri) || 0, 0, 100));
         slider.setAttribute('aria-label', `Brightness for ${group.name || 'zone'}`);
-        syncRange(slider, `zbri:${next.key}`, Math.round(clamp(Number(group.bri) || 0, 0, 100)));
+        briNum.label(`Brightness for ${group.name || 'zone'} in percent`);
+        syncRange(slider, key, value);
+        if (!editing(key)) briNum.set(value);
       }
       scenes.update(next.scenes);
     },
@@ -961,6 +1151,10 @@ function renderDashboard(s) {
   if (zones.length) bits.push(`${zones.length} ${zones.length === 1 ? 'zone' : 'zones'}`);
   if (s.scenes.length) bits.push(`${s.scenes.length} ${s.scenes.length === 1 ? 'scene' : 'scenes'}`);
   dash.summary.textContent = bits.join(' \u00b7 ');
+
+  const switchable = s.lights.some((l) => l.reachable);
+  dash.allOn.disabled = !switchable;
+  dash.allOff.disabled = !switchable;
 
   dash.empty.hidden = s.lights.length > 0;
   dash.zonesStrip.hidden = zones.length === 0;

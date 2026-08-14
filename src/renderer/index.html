@@ -103,12 +103,16 @@
     <div class="toolbar">
       <p class="toolbar__summary" id="dash-summary"></p>
       <div class="toolbar__spacer"></div>
+      <div class="master" role="group" aria-label="All lights">
+        <button class="btn btn--tiny" type="button" id="btn-all-on">All on</button>
+        <button class="btn btn--tiny" type="button" id="btn-all-off">All off</button>
+      </div>
       <div class="scenes--global" id="global-scenes" hidden></div>
       <div class="seg" id="transition-seg" role="group" aria-label="Transition time">
         <span class="seg__label">Transition</span>
         <button class="seg__btn" type="button" data-ms="0">Instant</button>
         <button class="seg__btn" type="button" data-ms="200">0.2s</button>
-        <button class="seg__btn is-active" type="button" data-ms="400">0.4s</button>
+        <button class="seg__btn" type="button" data-ms="400">0.4s</button>
         <button class="seg__btn" type="button" data-ms="1000">1s</button>
       </div>
     </div>

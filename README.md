@@ -46,12 +46,18 @@ discovery, `--store=<path>` relocates saved state (default
 
 ## What you can control
 
-- **Power** per bulb, per room, and a master toggle
+- **Power** per bulb, per room, and **All on / All off** for every reachable bulb
 - **Brightness** 0–100 %, clamped up to the bulb's own minimum dim level (10 % on
   most models — asking for less is silently refused by the firmware)
 - **Colour** via HS wheel or `#rrggbb` field
 - **Colour temperature** across the range the bulb reports (2200–6500 K on
   `ESP24_SHRGBC_01`), with a real kelvin gradient on the slider
+- **Exact numbers by hand**: every slider's readout is also an input — type
+  `4200` into the temperature box, or `40` into brightness, and press Enter.
+  Arrow keys step (50 K / 1 %), Shift+arrows step coarse (500 K / 10 %), Escape
+  reverts, out-of-range values clamp to what the bulb accepts.
+- **Transition time** (instant … 1 s) applies to every write and is remembered
+  between launches
 - **All 35 built-in WiZ scenes** (Ocean, Cozy, Party, Candlelight, …); animated
   ones also take a speed
 - **Rooms** grouped by the bulb's own `roomId`, with 10 scene chips per room
