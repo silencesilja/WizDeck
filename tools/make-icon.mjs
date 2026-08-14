@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * Generates build/icon.icns (and icon.png) with no image dependencies:
- * rasterise RGBA by hand -> PNG via zlib -> .iconset via sips -> .icns via iconutil.
+ * Generates build/icon.png, build/icon.icns and build/icon.ico with no image
+ * dependencies and no platform tools: rasterise RGBA by hand -> PNG via zlib ->
+ * pack those PNGs into ICNS/ICO containers. Runs identically on every OS, so a
+ * macOS bundle can be built from Linux and a Windows one from macOS.
  */
 import { deflateSync } from 'node:zlib';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const build = path.join(root, 'build');
-const SIZE = 1024;
 
 /* ------------------------------------------------------------------ raster */
 
@@ -22,25 +22,28 @@ const smooth = (edge0, edge1, x) => {
   return t * t * (3 - 2 * t);
 };
 
-function render() {
-  const px = Buffer.alloc(SIZE * SIZE * 4);
-  const c = SIZE / 2;
-  const radius = SIZE * 0.2237; // macOS squircle-ish corner radius
-  const inset = SIZE * 0.055;
+function render(size) {
+  const px = Buffer.alloc(size * size * 4);
+  const c = size / 2;
+  const radius = size * 0.2237; // macOS squircle-ish corner radius
+  const inset = size * 0.055;
+  // Edge softness scales with the raster: a fixed 1.5px feather is a staircase
+  // at 16px and a smear at 1024px.
+  const aa = Math.max(size / 683, 0.55);
 
-  for (let y = 0; y < SIZE; y += 1) {
-    for (let x = 0; x < SIZE; x += 1) {
-      const i = (y * SIZE + x) * 4;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const i = (y * size + x) * 4;
 
       // Rounded-rect mask with antialiased edge.
-      const dx = Math.max(inset + radius - x, 0, x - (SIZE - inset - radius));
-      const dy = Math.max(inset + radius - y, 0, y - (SIZE - inset - radius));
+      const dx = Math.max(inset + radius - x, 0, x - (size - inset - radius));
+      const dy = Math.max(inset + radius - y, 0, y - (size - inset - radius));
       const dist = Math.hypot(dx, dy);
-      const alpha = 1 - smooth(radius - 1.5, radius + 1.5, dist);
+      const alpha = 1 - smooth(radius - aa, radius + aa, dist);
       if (alpha <= 0) continue;
 
       // Base: near-black vertical gradient, slightly warm at the bottom.
-      const v = y / SIZE;
+      const v = y / size;
       let r = mix(24, 15, v);
       let g = mix(27, 17, v);
       let b = mix(34, 21, v);
@@ -48,20 +51,20 @@ function render() {
       // Warm bulb glow, offset up-left like the in-app mark.
       const gx = x - c * 0.98;
       const gy = y - c * 0.92;
-      const gd = Math.hypot(gx, gy) / (SIZE * 0.42);
+      const gd = Math.hypot(gx, gy) / (size * 0.42);
       const glow = Math.exp(-gd * gd * 3.2);
       r = mix(r, 242, glow * 0.92);
       g = mix(g, 168, glow * 0.86);
       b = mix(b, 60, glow * 0.74);
 
       // Hot core.
-      const core = 1 - smooth(SIZE * 0.1, SIZE * 0.132, Math.hypot(x - c * 0.98, y - c * 0.92));
+      const core = 1 - smooth(size * 0.1, size * 0.132, Math.hypot(x - c * 0.98, y - c * 0.92));
       r = mix(r, 255, core);
       g = mix(g, 236, core);
       b = mix(b, 196, core);
 
       // Top-edge sheen so the tile does not read flat.
-      const sheen = (1 - smooth(0, SIZE * 0.5, y)) * 0.06;
+      const sheen = (1 - smooth(0, size * 0.5, y)) * 0.06;
       r = mix(r, 255, sheen);
       g = mix(g, 255, sheen);
       b = mix(b, 255, sheen);
@@ -102,16 +105,17 @@ function crc32(buf) {
   return c ^ -1;
 }
 
-function toPng(rgba) {
+function toPng(rgba, size) {
   const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(SIZE, 0);
-  ihdr.writeUInt32BE(SIZE, 4);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
   ihdr[8] = 8; // bit depth
   ihdr[9] = 6; // RGBA
-  const raw = Buffer.alloc((SIZE * 4 + 1) * SIZE);
-  for (let y = 0; y < SIZE; y += 1) {
-    raw[y * (SIZE * 4 + 1)] = 0; // filter: none
-    rgba.copy(raw, y * (SIZE * 4 + 1) + 1, y * SIZE * 4, (y + 1) * SIZE * 4);
+  const stride = size * 4 + 1;
+  const raw = Buffer.alloc(stride * size);
+  for (let y = 0; y < size; y += 1) {
+    raw[y * stride] = 0; // filter: none
+    rgba.copy(raw, y * stride + 1, y * size * 4, (y + 1) * size * 4);
   }
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -121,25 +125,81 @@ function toPng(rgba) {
   ]);
 }
 
+// Rendering each size from scratch beats downscaling: no resampler, and the
+// small sizes keep a crisp edge.
+const pngCache = new Map();
+const pngAt = (size) => {
+  let png = pngCache.get(size);
+  if (!png) {
+    png = toPng(render(size), size);
+    pngCache.set(size, png);
+  }
+  return png;
+};
+
+/* -------------------------------------------------------------------- icns */
+
+// OSType -> pixel size. ic04/ic05 cover the small Finder list sizes, ic07..ic10
+// the plain 128/256/512/1024 slots, ic11..ic14 the @2x variants the Dock picks
+// on Retina displays.
+const ICNS_TYPES = [
+  ['ic04', 16], ['ic05', 32], ['ic11', 32], ['ic12', 64],
+  ['ic07', 128], ['ic13', 256], ['ic08', 256], ['ic14', 512],
+  ['ic09', 512], ['ic10', 1024],
+];
+
+function toIcns() {
+  const entries = ICNS_TYPES.map(([type, size]) => {
+    const png = pngAt(size);
+    const header = Buffer.alloc(8);
+    header.write(type, 0, 'ascii');
+    header.writeUInt32BE(png.length + 8, 4);
+    return Buffer.concat([header, png]);
+  });
+  const body = Buffer.concat(entries);
+  const header = Buffer.alloc(8);
+  header.write('icns', 0, 'ascii');
+  header.writeUInt32BE(body.length + 8, 4);
+  return Buffer.concat([header, body]);
+}
+
+/* --------------------------------------------------------------------- ico */
+
+const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
+
+function toIco() {
+  const images = ICO_SIZES.map(pngAt);
+  const dir = Buffer.alloc(6 + 16 * images.length);
+  dir.writeUInt16LE(0, 0); // reserved
+  dir.writeUInt16LE(1, 2); // type: icon
+  dir.writeUInt16LE(images.length, 4);
+
+  let offset = dir.length;
+  images.forEach((png, i) => {
+    const size = ICO_SIZES[i];
+    const at = 6 + 16 * i;
+    dir[at] = size & 0xff; // 256 is encoded as 0
+    dir[at + 1] = size & 0xff;
+    dir[at + 2] = 0; // palette size
+    dir[at + 3] = 0; // reserved
+    dir.writeUInt16LE(1, at + 4); // colour planes
+    dir.writeUInt16LE(32, at + 6); // bits per pixel
+    dir.writeUInt32LE(png.length, at + 8);
+    dir.writeUInt32LE(offset, at + 12);
+    offset += png.length;
+  });
+  return Buffer.concat([dir, ...images]);
+}
+
 /* -------------------------------------------------------------------- main */
 
 mkdirSync(build, { recursive: true });
-const png = path.join(build, 'icon.png');
-writeFileSync(png, toPng(render()));
-console.log(`wrote ${png}`);
-
-const iconset = path.join(build, 'icon.iconset');
-rmSync(iconset, { recursive: true, force: true });
-mkdirSync(iconset);
-for (const [size, name] of [
-  [16, 'icon_16x16.png'], [32, 'icon_16x16@2x.png'],
-  [32, 'icon_32x32.png'], [64, 'icon_32x32@2x.png'],
-  [128, 'icon_128x128.png'], [256, 'icon_128x128@2x.png'],
-  [256, 'icon_256x256.png'], [512, 'icon_256x256@2x.png'],
-  [512, 'icon_512x512.png'], [1024, 'icon_512x512@2x.png'],
+for (const [name, data] of [
+  ['icon.png', pngAt(1024)],
+  ['icon.icns', toIcns()],
+  ['icon.ico', toIco()],
 ]) {
-  execFileSync('sips', ['-z', String(size), String(size), png, '--out', path.join(iconset, name)], { stdio: 'ignore' });
+  const out = path.join(build, name);
+  writeFileSync(out, data);
+  console.log(`wrote ${out} (${(data.length / 1024).toFixed(0)} KB)`);
 }
-execFileSync('iconutil', ['-c', 'icns', iconset, '-o', path.join(build, 'icon.icns')]);
-rmSync(iconset, { recursive: true, force: true });
-console.log(`wrote ${path.join(build, 'icon.icns')}`);

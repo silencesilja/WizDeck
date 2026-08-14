@@ -4,13 +4,27 @@
   "private": true,
   "description": "Electron desktop control for WiZ smart bulbs: finds them on the LAN by MAC even after DHCP changes their IP, then controls power, brightness, colour, colour temperature, scenes/effects and rooms over local UDP.",
   "productName": "WizDeck",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/silencesilja/WizDeck.git"
+  },
+  "homepage": "https://github.com/silencesilja/WizDeck#readme",
+  "bugs": "https://github.com/silencesilja/WizDeck/issues",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "verify": "node tools/verify.mjs",
     "icon": "node tools/make-icon.mjs",
-    "package": "node tools/install-macos.mjs --no-install",
-    "install:app": "node tools/install-macos.mjs"
+    "package": "node tools/package.mjs",
+    "package:mac": "node tools/package.mjs --platform=darwin",
+    "package:win": "node tools/package.mjs --platform=win32",
+    "package:linux": "node tools/package.mjs --platform=linux",
+    "install:app": "node tools/install-macos.mjs",
+    "install:linux": "node tools/install-linux.mjs"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "devDependencies": {
     "@electron/packager": "^20.3.0",
